@@ -23,20 +23,15 @@ pub enum AttrMacro {
 #[non_exhaustive]
 pub enum Response<'a> {
     Capabilities(Vec<Capability<'a>>),
-    Continue {
-        code: Option<ResponseCode<'a>>,
-        information: Option<Cow<'a, str>>,
-    },
+    Continue(Outcome<'a>),
     Done {
         tag: RequestId,
         status: Status,
-        code: Option<ResponseCode<'a>>,
-        information: Option<Cow<'a, str>>,
+        outcome: Outcome<'a>,
     },
     Data {
         status: Status,
-        code: Option<ResponseCode<'a>>,
-        information: Option<Cow<'a, str>>,
+        outcome: Outcome<'a>,
     },
     Expunge(u32),
     Vanished {
@@ -66,29 +61,19 @@ impl<'a> Response<'a> {
                     .map(Capability::into_owned)
                     .collect(),
             ),
-            Response::Continue { code, information } => Response::Continue {
-                code: code.map(ResponseCode::into_owned),
-                information: information.map(to_owned_cow),
-            },
+            Response::Continue(outcome) => Response::Continue(outcome.into_owned()),
             Response::Done {
                 tag,
                 status,
-                code,
-                information,
+                outcome,
             } => Response::Done {
                 tag,
                 status,
-                code: code.map(ResponseCode::into_owned),
-                information: information.map(to_owned_cow),
+                outcome: outcome.into_owned(),
             },
-            Response::Data {
+            Response::Data { status, outcome } => Response::Data {
                 status,
-                code,
-                information,
-            } => Response::Data {
-                status,
-                code: code.map(ResponseCode::into_owned),
-                information: information.map(to_owned_cow),
+                outcome: outcome.into_owned(),
             },
             Response::Expunge(seq) => Response::Expunge(seq),
             Response::Vanished { earlier, uids } => Response::Vanished { earlier, uids },
@@ -107,6 +92,21 @@ impl<'a> Response<'a> {
             Response::Acl(acl_list) => Response::Acl(acl_list.into_owned()),
             Response::ListRights(rights) => Response::ListRights(rights.into_owned()),
             Response::MyRights(rights) => Response::MyRights(rights.into_owned()),
+        }
+    }
+}
+
+#[derive(Debug, Default, Eq, PartialEq)]
+pub struct Outcome<'a> {
+    pub code: Option<ResponseCode<'a>>,
+    pub information: Option<Cow<'a, str>>,
+}
+
+impl Outcome<'_> {
+    pub fn into_owned(self) -> Outcome<'static> {
+        Outcome {
+            code: self.code.map(ResponseCode::into_owned),
+            information: self.information.map(to_owned_cow),
         }
     }
 }
@@ -216,11 +216,7 @@ pub struct Metadata {
 pub enum MailboxDatum<'a> {
     Exists(u32),
     Flags(Vec<Cow<'a, str>>),
-    List {
-        name_attributes: Vec<NameAttribute<'a>>,
-        delimiter: Option<Cow<'a, str>>,
-        name: Cow<'a, str>,
-    },
+    List(MailboxListData<'a>),
     Search(Vec<u32>),
     Sort(Vec<u32>),
     Status {
@@ -248,18 +244,7 @@ impl<'a> MailboxDatum<'a> {
             MailboxDatum::Flags(flags) => {
                 MailboxDatum::Flags(flags.into_iter().map(to_owned_cow).collect())
             }
-            MailboxDatum::List {
-                name_attributes,
-                delimiter,
-                name,
-            } => MailboxDatum::List {
-                name_attributes: name_attributes
-                    .into_iter()
-                    .map(|named_attribute| named_attribute.into_owned())
-                    .collect(),
-                delimiter: delimiter.map(to_owned_cow),
-                name: to_owned_cow(name),
-            },
+            MailboxDatum::List(data) => MailboxDatum::List(data.into_owned()),
             MailboxDatum::Search(seqs) => MailboxDatum::Search(seqs),
             MailboxDatum::Sort(seqs) => MailboxDatum::Sort(seqs),
             MailboxDatum::Status { mailbox, status } => MailboxDatum::Status {
@@ -284,6 +269,27 @@ impl<'a> MailboxDatum<'a> {
             }
             MailboxDatum::GmailMsgId(msgid) => MailboxDatum::GmailMsgId(msgid),
             MailboxDatum::GmailThrId(thrid) => MailboxDatum::GmailThrId(thrid),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MailboxListData<'a> {
+    pub name_attributes: Vec<NameAttribute<'a>>,
+    pub delimiter: Option<Cow<'a, str>>,
+    pub name: Cow<'a, str>,
+}
+
+impl MailboxListData<'_> {
+    pub fn into_owned(self) -> MailboxListData<'static> {
+        MailboxListData {
+            name_attributes: self
+                .name_attributes
+                .into_iter()
+                .map(|named_attribute| named_attribute.into_owned())
+                .collect(),
+            delimiter: self.delimiter.map(to_owned_cow),
+            name: to_owned_cow(self.name),
         }
     }
 }
@@ -359,6 +365,24 @@ pub enum AttributeValue<'a> {
     GmailLabels(Vec<Cow<'a, str>>),
     GmailMsgId(u64),
     GmailThrId(u64),
+    /// RFC 8474 §5.1 — `EMAILID`: a server-assigned unique identifier for
+    /// a message. RFC 8474 mandates that the server can always provide an
+    /// EMAILID for any stored message, so this variant is non-optional.
+    EmailId(Cow<'a, str>),
+    /// RFC 8474 §5.2 — `THREADID`: a server-assigned identifier for the
+    /// thread a message belongs to.  `None` corresponds to the wire-form
+    /// `THREADID NIL`, which RFC 8474 §5.2 mandates for messages that do
+    /// not currently have a thread association.
+    ThreadId(Option<Cow<'a, str>>),
+    /// An unknown or not-yet-supported FETCH attribute.
+    ///
+    /// Returned for any `msg-att` token that the parser does not explicitly
+    /// recognise (e.g. `SAVEDATE` from RFC 8514, or any future extension).
+    /// The name and raw value are consumed and discarded so that the rest
+    /// of the `FETCH` attribute list can be parsed without error.  Callers
+    /// that need the raw value should match on the specific RFC extension
+    /// and open a tracking issue or PR.
+    Unknown,
 }
 
 impl<'a> AttributeValue<'a> {
@@ -390,6 +414,9 @@ impl<'a> AttributeValue<'a> {
             }
             AttributeValue::GmailMsgId(v) => AttributeValue::GmailMsgId(v),
             AttributeValue::GmailThrId(v) => AttributeValue::GmailThrId(v),
+            AttributeValue::EmailId(v) => AttributeValue::EmailId(to_owned_cow(v)),
+            AttributeValue::ThreadId(v) => AttributeValue::ThreadId(v.map(to_owned_cow)),
+            AttributeValue::Unknown => AttributeValue::Unknown,
         }
     }
 }
@@ -947,6 +974,14 @@ impl<'a> QuotaRoot<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_attribute_value_unknown_into_owned() {
+        assert_eq!(
+            AttributeValue::Unknown.into_owned(),
+            AttributeValue::Unknown
+        );
+    }
 
     /// Tests that the [`NameAttribute::into_owned`] method returns the
     /// same value (the ownership should only change).

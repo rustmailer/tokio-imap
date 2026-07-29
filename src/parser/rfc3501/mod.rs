@@ -54,10 +54,10 @@ fn status(i: &[u8]) -> IResult<&[u8], Status> {
     alt((status_ok, status_no, status_bad, status_preauth, status_bye))(i)
 }
 
-pub(crate) fn mailbox(i: &[u8]) -> IResult<&[u8], &str> {
+pub(crate) fn mailbox(i: &[u8]) -> IResult<&[u8], Cow<'_, str>> {
     map(astring_utf8, |s| {
         if s.eq_ignore_ascii_case("INBOX") {
-            "INBOX"
+            Cow::Borrowed("INBOX")
         } else {
             s
         }
@@ -115,7 +115,7 @@ fn resp_text_code_badcharset(i: &[u8]) -> IResult<&[u8], ResponseCode<'_>> {
             tag_no_case(b"BADCHARSET"),
             opt(preceded(
                 tag(b" "),
-                parenthesized_nonempty_list(map(astring_utf8, Cow::Borrowed)),
+                parenthesized_nonempty_list(astring_utf8),
             )),
         ),
         ResponseCode::BadCharset,
@@ -286,8 +286,7 @@ fn name_attribute(i: &[u8]) -> IResult<&[u8], NameAttribute<'_>> {
     ))(i)
 }
 
-#[allow(clippy::type_complexity)]
-fn mailbox_list(i: &[u8]) -> IResult<&[u8], (Vec<NameAttribute<'_>>, Option<&str>, &str)> {
+fn mailbox_list(i: &[u8]) -> IResult<&[u8], MailboxListData<'_>> {
     map(
         tuple((
             parenthesized_list(name_attribute),
@@ -296,27 +295,23 @@ fn mailbox_list(i: &[u8]) -> IResult<&[u8], (Vec<NameAttribute<'_>>, Option<&str
             tag(b" "),
             mailbox,
         )),
-        |(name_attributes, _, delimiter, _, name)| (name_attributes, delimiter, name),
+        |(name_attributes, _, delimiter, _, name)| MailboxListData {
+            name_attributes,
+            delimiter,
+            name,
+        },
     )(i)
 }
 
 fn mailbox_data_list(i: &[u8]) -> IResult<&[u8], MailboxDatum<'_>> {
     map(preceded(tag_no_case("LIST "), mailbox_list), |data| {
-        MailboxDatum::List {
-            name_attributes: data.0,
-            delimiter: data.1.map(Cow::Borrowed),
-            name: Cow::Borrowed(data.2),
-        }
+        MailboxDatum::List(data)
     })(i)
 }
 
 fn mailbox_data_lsub(i: &[u8]) -> IResult<&[u8], MailboxDatum<'_>> {
     map(preceded(tag_no_case("LSUB "), mailbox_list), |data| {
-        MailboxDatum::List {
-            name_attributes: data.0,
-            delimiter: data.1.map(Cow::Borrowed),
-            name: Cow::Borrowed(data.2),
-        }
+        MailboxDatum::List(data)
     })(i)
 }
 
@@ -358,10 +353,7 @@ fn status_att_list(i: &[u8]) -> IResult<&[u8], Vec<StatusAttribute>> {
 fn mailbox_data_status(i: &[u8]) -> IResult<&[u8], MailboxDatum<'_>> {
     map(
         tuple((tag_no_case("STATUS "), mailbox, tag(" "), status_att_list)),
-        |(_, mailbox, _, status)| MailboxDatum::Status {
-            mailbox: Cow::Borrowed(mailbox),
-            status,
-        },
+        |(_, mailbox, _, status)| MailboxDatum::Status { mailbox, status },
     )(i)
 }
 
@@ -510,7 +502,7 @@ fn msg_att_envelope(i: &[u8]) -> IResult<&[u8], AttributeValue<'_>> {
 fn msg_att_internal_date(i: &[u8]) -> IResult<&[u8], AttributeValue<'_>> {
     map(
         preceded(tag_no_case("INTERNALDATE "), nstring_utf8),
-        |date| AttributeValue::InternalDate(Cow::Borrowed(date.unwrap())),
+        |date| AttributeValue::InternalDate(date.unwrap()),
     )(i)
 }
 
@@ -565,6 +557,78 @@ fn msg_att_uid(i: &[u8]) -> IResult<&[u8], AttributeValue<'_>> {
 //                   "BODY" section ["<" number ">"] SP nstring /
 //                   "UID" SP uniqueid
 //                     ; MUST NOT change for a message
+
+// RFC 8474 §5.1 — EMAILID
+//   "EMAILID" SP "(" objectid ")"
+// objectid = 1*ASTRING-CHAR (RFC 8474 §3).  EMAILID is non-optional: a
+// compliant server MUST be able to provide one for any stored message,
+// so the wire form `EMAILID NIL` is not allowed by the RFC.  If a
+// non-compliant server emits it anyway, this parser fails and the
+// catch-all `msg_att_unknown` below absorbs the attribute.
+fn msg_att_emailid(i: &[u8]) -> IResult<&[u8], AttributeValue<'_>> {
+    map(
+        preceded(
+            tag_no_case("EMAILID "),
+            paren_delimited(map_res(take_while1(is_astring_char), from_utf8)),
+        ),
+        |id| AttributeValue::EmailId(Cow::Borrowed(id)),
+    )(i)
+}
+
+// RFC 8474 §5.2 — THREADID
+//   "THREADID" SP ( "(" objectid ")" / nil )
+// THREADID may be NIL, which the RFC mandates for messages that do not
+// currently have a thread association.  We map NIL → `None`.
+fn msg_att_threadid(i: &[u8]) -> IResult<&[u8], AttributeValue<'_>> {
+    map(
+        preceded(
+            tag_no_case("THREADID "),
+            alt((
+                map(nil, |_| None),
+                map(
+                    paren_delimited(map_res(take_while1(is_astring_char), from_utf8)),
+                    |id| Some(Cow::Borrowed(id)),
+                ),
+            )),
+        ),
+        AttributeValue::ThreadId,
+    )(i)
+}
+
+// Catch-all for RFC extension attributes not explicitly handled above.
+//
+// RFC-compliant servers (Apache James, Stalwart, Dovecot) may include
+// attributes from extensions that post-date this crate, for example:
+//   - RFC 8514 §2 SAVEDATE
+//   - any future extension this crate has not yet typed
+//
+// When all known parsers fail, this function consumes "name SP value" where
+// the value is one of:
+//   - a single-level parenthesised group `(...)`
+//   - an nstring (NIL / quoted-string / literal) — covers SAVEDATE and NIL forms
+//   - a bare atom or number — fallback for any remaining scalar value
+//
+// The name and value are discarded and `AttributeValue::Unknown` is returned so
+// that the rest of the `FETCH` attribute list can be parsed without error.
+// Note: deeply nested parenthesised values (beyond one level) are not handled
+// by the bare-paren arm; add a dedicated parser if a specific extension needs them.
+fn msg_att_unknown(i: &[u8]) -> IResult<&[u8], AttributeValue<'_>> {
+    map(
+        pair(
+            map_res(take_while1(is_atom_char), from_utf8),
+            preceded(
+                tag(b" "),
+                alt((
+                    value((), paren_delimited(take_while(|c: u8| c != b')'))),
+                    value((), nstring),
+                    value((), take_while1(|c: u8| c != b' ' && c != b')')),
+                )),
+            ),
+        ),
+        |_| AttributeValue::Unknown,
+    )(i)
+}
+
 fn msg_att(i: &[u8]) -> IResult<&[u8], AttributeValue<'_>> {
     alt((
         msg_att_body_section,
@@ -581,6 +645,9 @@ fn msg_att(i: &[u8]) -> IResult<&[u8], AttributeValue<'_>> {
         gmail::msg_att_gmail_labels,
         gmail::msg_att_gmail_msgid,
         gmail::msg_att_gmail_thrid,
+        msg_att_emailid,
+        msg_att_threadid,
+        msg_att_unknown,
     ))(i)
 }
 
@@ -612,23 +679,27 @@ fn imap_tag(i: &[u8]) -> IResult<&[u8], RequestId> {
 //     ["[" resp-text-code "]" SP] text
 // However, examples in RFC 4551 (Conditional STORE) counteract this by giving
 // examples of `resp-text` that do not include the trailing space and text.
-fn resp_text(i: &[u8]) -> IResult<&[u8], (Option<ResponseCode<'_>>, Option<&str>)> {
+fn resp_text(i: &[u8]) -> IResult<&[u8], Outcome<'_>> {
     map(tuple((opt(resp_text_code), text)), |(code, text)| {
-        let res = if text.is_empty() {
+        let information = if text.is_empty() {
             None
         } else if code.is_some() {
-            Some(&text[1..])
+            Some(match text {
+                Cow::Borrowed(s) => Cow::Borrowed(&s[1..]),
+                Cow::Owned(s) => Cow::Owned(s[1..].to_string()),
+            })
         } else {
             Some(text)
         };
-        (code, res)
+
+        Outcome { code, information }
     })(i)
 }
 
 // an response-text if it is at the end of a response. Empty text is then allowed without the normally needed trailing space.
-fn trailing_resp_text(i: &[u8]) -> IResult<&[u8], (Option<ResponseCode<'_>>, Option<&str>)> {
+fn trailing_resp_text(i: &[u8]) -> IResult<&[u8], Outcome<'_>> {
     map(opt(tuple((tag(b" "), resp_text))), |resptext| {
-        resptext.map(|(_, tuple)| tuple).unwrap_or((None, None))
+        resptext.map(|(_, tuple)| tuple).unwrap_or_default()
     })(i)
 }
 
@@ -638,10 +709,7 @@ pub(crate) fn continue_req(i: &[u8]) -> IResult<&[u8], Response<'_>> {
     // TODO: base64
     map(
         tuple((tag("+"), opt(tag(" ")), resp_text, tag("\r\n"))),
-        |(_, _, text, _)| Response::Continue {
-            code: text.0,
-            information: text.1.map(Cow::Borrowed),
-        },
+        |(_, _, outcome, _)| Response::Continue(outcome),
     )(i)
 }
 
@@ -658,11 +726,10 @@ pub(crate) fn response_tagged(i: &[u8]) -> IResult<&[u8], Response<'_>> {
             trailing_resp_text,
             tag(b"\r\n"),
         )),
-        |(tag, _, status, text, _)| Response::Done {
+        |(tag, _, status, outcome, _)| Response::Done {
             tag,
             status,
-            code: text.0,
-            information: text.1.map(Cow::Borrowed),
+            outcome,
         },
     )(i)
 }
@@ -675,12 +742,8 @@ pub(crate) fn response_tagged(i: &[u8]) -> IResult<&[u8], Response<'_>> {
 // resp-cond-state = ("OK" / "NO" / "BAD") SP resp-text
 //                     ; Status condition
 fn resp_cond(i: &[u8]) -> IResult<&[u8], Response<'_>> {
-    map(tuple((status, trailing_resp_text)), |(status, text)| {
-        Response::Data {
-            status,
-            code: text.0,
-            information: text.1.map(Cow::Borrowed),
-        }
+    map(tuple((status, trailing_resp_text)), |(status, outcome)| {
+        Response::Data { status, outcome }
     })(i)
 }
 
