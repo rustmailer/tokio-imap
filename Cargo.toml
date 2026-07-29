@@ -7,8 +7,7 @@ description = "IMAP protocol parser and data structures"
 documentation = "https://docs.rs/imap-proto"
 keywords = ["imap", "email"]
 categories = ["email", "network-programming", "parser-implementations"]
-homepage = "https://github.com/djc/tokio-imap"
-repository = "https://github.com/djc/tokio-imap"
+repository = "https://github.com/djc/imap-proto"
 license = "MIT OR Apache-2.0"
 readme = "../README.md"
 
