@@ -9,7 +9,7 @@
 [![Apache License 2.0](https://img.shields.io/badge/license-ALv2-blue.svg)](./LICENSE-APACHE)
 
 All feedback welcome. Feel free to file bugs, requests for documentation and
-any other feedback to the [issue tracker][issues] or [tweet me][twitter].
+any other feedback to the [issue tracker][issues].
 
 imap-proto was created and is maintained by Dirkjan Ochtman. If you depend on this
 projects, please support the project via [GitHub Sponsors] or contact me for support.
