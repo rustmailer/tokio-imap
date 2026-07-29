@@ -4,6 +4,7 @@
 [![crates.io, downloads](https://img.shields.io/crates/d/imap-proto.svg)](https://crates.io/crates/imap-proto)
 [![crates.io, latest release](https://img.shields.io/crates/v/imap-proto.svg)](https://crates.io/crates/imap-proto)
 [![API docs, latest release](https://docs.rs/imap-proto/badge.svg)](http://docs.rs/imap-proto)
+[![Chat](https://img.shields.io/discord/976380008299917365?logo=discord)](https://discord.gg/ujJ4pGzkGU)
 [![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE-MIT)
 [![Apache License 2.0](https://img.shields.io/badge/license-ALv2-blue.svg)](./LICENSE-APACHE)
 
