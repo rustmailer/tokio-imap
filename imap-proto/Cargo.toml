@@ -12,9 +12,6 @@ repository = "https://github.com/djc/tokio-imap"
 license = "MIT OR Apache-2.0"
 readme = "../README.md"
 
-[badges]
-maintenance = { status = "passively-maintained" }
-
 [dependencies]
 nom = "7"
 
