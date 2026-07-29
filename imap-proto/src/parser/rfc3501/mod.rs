@@ -679,10 +679,9 @@ fn imap_tag(i: &[u8]) -> IResult<&[u8], RequestId> {
 //     ["[" resp-text-code "]" SP] text
 // However, examples in RFC 4551 (Conditional STORE) counteract this by giving
 // examples of `resp-text` that do not include the trailing space and text.
-#[allow(clippy::type_complexity)]
-fn resp_text(i: &[u8]) -> IResult<&[u8], (Option<ResponseCode<'_>>, Option<Cow<'_, str>>)> {
+fn resp_text(i: &[u8]) -> IResult<&[u8], Outcome<'_>> {
     map(tuple((opt(resp_text_code), text)), |(code, text)| {
-        let res = if text.is_empty() {
+        let information = if text.is_empty() {
             None
         } else if code.is_some() {
             Some(match text {
@@ -692,17 +691,15 @@ fn resp_text(i: &[u8]) -> IResult<&[u8], (Option<ResponseCode<'_>>, Option<Cow<'
         } else {
             Some(text)
         };
-        (code, res)
+
+        Outcome { code, information }
     })(i)
 }
 
 // an response-text if it is at the end of a response. Empty text is then allowed without the normally needed trailing space.
-#[allow(clippy::type_complexity)]
-fn trailing_resp_text(
-    i: &[u8],
-) -> IResult<&[u8], (Option<ResponseCode<'_>>, Option<Cow<'_, str>>)> {
+fn trailing_resp_text(i: &[u8]) -> IResult<&[u8], Outcome<'_>> {
     map(opt(tuple((tag(b" "), resp_text))), |resptext| {
-        resptext.map(|(_, tuple)| tuple).unwrap_or((None, None))
+        resptext.map(|(_, tuple)| tuple).unwrap_or_default()
     })(i)
 }
 
@@ -712,10 +709,7 @@ pub(crate) fn continue_req(i: &[u8]) -> IResult<&[u8], Response<'_>> {
     // TODO: base64
     map(
         tuple((tag("+"), opt(tag(" ")), resp_text, tag("\r\n"))),
-        |(_, _, text, _)| Response::Continue {
-            code: text.0,
-            information: text.1,
-        },
+        |(_, _, outcome, _)| Response::Continue(outcome),
     )(i)
 }
 
@@ -732,11 +726,10 @@ pub(crate) fn response_tagged(i: &[u8]) -> IResult<&[u8], Response<'_>> {
             trailing_resp_text,
             tag(b"\r\n"),
         )),
-        |(tag, _, status, text, _)| Response::Done {
+        |(tag, _, status, outcome, _)| Response::Done {
             tag,
             status,
-            code: text.0,
-            information: text.1,
+            outcome,
         },
     )(i)
 }
@@ -749,12 +742,8 @@ pub(crate) fn response_tagged(i: &[u8]) -> IResult<&[u8], Response<'_>> {
 // resp-cond-state = ("OK" / "NO" / "BAD") SP resp-text
 //                     ; Status condition
 fn resp_cond(i: &[u8]) -> IResult<&[u8], Response<'_>> {
-    map(tuple((status, trailing_resp_text)), |(status, text)| {
-        Response::Data {
-            status,
-            code: text.0,
-            information: text.1,
-        }
+    map(tuple((status, trailing_resp_text)), |(status, outcome)| {
+        Response::Data { status, outcome }
     })(i)
 }
 

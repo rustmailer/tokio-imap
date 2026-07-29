@@ -357,8 +357,11 @@ mod tests {
                 _,
                 Response::Data {
                     status: Status::Ok,
-                    code: Some(ResponseCode::MetadataLongEntries(123)),
-                    information: Some(Cow::Borrowed("Some entries omitted.")),
+                    outcome:
+                        Outcome {
+                            code: Some(ResponseCode::MetadataLongEntries(123)),
+                            information: Some(Cow::Borrowed("Some entries omitted.")),
+                        },
                 },
             )) => {}
             rsp => panic!("unexpected response {rsp:?}"),
@@ -369,8 +372,11 @@ mod tests {
                 _,
                 Response::Data {
                     status: Status::No,
-                    code: Some(ResponseCode::MetadataMaxSize(123)),
-                    information: Some(Cow::Borrowed("Annotation too large.")),
+                    outcome:
+                        Outcome {
+                            code: Some(ResponseCode::MetadataMaxSize(123)),
+                            information: Some(Cow::Borrowed("Annotation too large.")),
+                        },
                 },
             )) => {}
             rsp => panic!("unexpected response {rsp:?}"),
@@ -381,8 +387,11 @@ mod tests {
                 _,
                 Response::Data {
                     status: Status::No,
-                    code: Some(ResponseCode::MetadataTooMany),
-                    information: Some(Cow::Borrowed("Too many annotations.")),
+                    outcome:
+                        Outcome {
+                            code: Some(ResponseCode::MetadataTooMany),
+                            information: Some(Cow::Borrowed("Too many annotations.")),
+                        },
                 },
             )) => {}
             rsp => panic!("unexpected response {rsp:?}"),
@@ -393,8 +402,11 @@ mod tests {
                 _,
                 Response::Data {
                     status: Status::No,
-                    code: Some(ResponseCode::MetadataNoPrivate),
-                    information: Some(Cow::Borrowed("Private annotations not supported.")),
+                    outcome:
+                        Outcome {
+                            code: Some(ResponseCode::MetadataNoPrivate),
+                            information: Some(Cow::Borrowed("Private annotations not supported.")),
+                        },
                 },
             )) => {}
             rsp => panic!("unexpected response {rsp:?}"),

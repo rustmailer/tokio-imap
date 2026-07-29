@@ -23,20 +23,15 @@ pub enum AttrMacro {
 #[non_exhaustive]
 pub enum Response<'a> {
     Capabilities(Vec<Capability<'a>>),
-    Continue {
-        code: Option<ResponseCode<'a>>,
-        information: Option<Cow<'a, str>>,
-    },
+    Continue(Outcome<'a>),
     Done {
         tag: RequestId,
         status: Status,
-        code: Option<ResponseCode<'a>>,
-        information: Option<Cow<'a, str>>,
+        outcome: Outcome<'a>,
     },
     Data {
         status: Status,
-        code: Option<ResponseCode<'a>>,
-        information: Option<Cow<'a, str>>,
+        outcome: Outcome<'a>,
     },
     Expunge(u32),
     Vanished {
@@ -66,29 +61,19 @@ impl<'a> Response<'a> {
                     .map(Capability::into_owned)
                     .collect(),
             ),
-            Response::Continue { code, information } => Response::Continue {
-                code: code.map(ResponseCode::into_owned),
-                information: information.map(to_owned_cow),
-            },
+            Response::Continue(outcome) => Response::Continue(outcome.into_owned()),
             Response::Done {
                 tag,
                 status,
-                code,
-                information,
+                outcome,
             } => Response::Done {
                 tag,
                 status,
-                code: code.map(ResponseCode::into_owned),
-                information: information.map(to_owned_cow),
+                outcome: outcome.into_owned(),
             },
-            Response::Data {
+            Response::Data { status, outcome } => Response::Data {
                 status,
-                code,
-                information,
-            } => Response::Data {
-                status,
-                code: code.map(ResponseCode::into_owned),
-                information: information.map(to_owned_cow),
+                outcome: outcome.into_owned(),
             },
             Response::Expunge(seq) => Response::Expunge(seq),
             Response::Vanished { earlier, uids } => Response::Vanished { earlier, uids },
@@ -107,6 +92,21 @@ impl<'a> Response<'a> {
             Response::Acl(acl_list) => Response::Acl(acl_list.into_owned()),
             Response::ListRights(rights) => Response::ListRights(rights.into_owned()),
             Response::MyRights(rights) => Response::MyRights(rights.into_owned()),
+        }
+    }
+}
+
+#[derive(Debug, Default, Eq, PartialEq)]
+pub struct Outcome<'a> {
+    pub code: Option<ResponseCode<'a>>,
+    pub information: Option<Cow<'a, str>>,
+}
+
+impl Outcome<'_> {
+    pub fn into_owned(self) -> Outcome<'static> {
+        Outcome {
+            code: self.code.map(ResponseCode::into_owned),
+            information: self.information.map(to_owned_cow),
         }
     }
 }

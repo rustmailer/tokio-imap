@@ -385,8 +385,11 @@ fn test_unseen() {
             _,
             Response::Data {
                 status: Status::Ok,
-                code: Some(ResponseCode::Unseen(3)),
-                information: Some(Cow::Borrowed("Message 3 is first unseen")),
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::Unseen(3)),
+                        information: Some(Cow::Borrowed("Message 3 is first unseen")),
+                    },
             },
         ) => {}
         rsp => panic!("unexpected response {rsp:?}"),
@@ -444,8 +447,11 @@ fn test_resp_text_lossy_decode_8bit() {
             _,
             Response::Data {
                 status: Status::Ok,
-                code: None,
-                information: Some(info),
+                outcome:
+                    Outcome {
+                        code: None,
+                        information: Some(info),
+                    },
             },
         )) => {
             assert!(
@@ -532,10 +538,10 @@ fn test_notify() {
     match parse_response(b"+ idling\r\n") {
         Ok((
             _,
-            Response::Continue {
+            Response::Continue(Outcome {
                 code: None,
                 information: Some(Cow::Borrowed("idling")),
-            },
+            }),
         )) => {}
         rsp => panic!("unexpected response {rsp:?}"),
     }
@@ -623,8 +629,11 @@ fn test_response_codes() {
             _,
             Response::Data {
                 status: Status::Ok,
-                code: Some(ResponseCode::Alert),
-                information: Some(Cow::Borrowed("Alert!")),
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::Alert),
+                        information: Some(Cow::Borrowed("Alert!")),
+                    },
             },
         )) => {}
         rsp => panic!("unexpected response {rsp:?}"),
@@ -635,8 +644,11 @@ fn test_response_codes() {
             _,
             Response::Data {
                 status: Status::No,
-                code: Some(ResponseCode::Parse),
-                information: Some(Cow::Borrowed("Something")),
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::Parse),
+                        information: Some(Cow::Borrowed("Something")),
+                    },
             },
         )) => {}
         rsp => panic!("unexpected response {rsp:?}"),
@@ -647,8 +659,11 @@ fn test_response_codes() {
             _,
             Response::Data {
                 status: Status::Ok,
-                code: Some(ResponseCode::Capabilities(c)),
-                information: Some(Cow::Borrowed("Logged in")),
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::Capabilities(c)),
+                        information: Some(Cow::Borrowed("Logged in")),
+                    },
             },
         )) => {
             assert_eq!(c.len(), 2);
@@ -663,8 +678,11 @@ fn test_response_codes() {
             _,
             Response::Data {
                 status: Status::Ok,
-                code: Some(ResponseCode::Capabilities(c)),
-                information: Some(Cow::Borrowed("Logged in")),
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::Capabilities(c)),
+                        information: Some(Cow::Borrowed("Logged in")),
+                    },
             },
         )) => {
             assert_eq!(c.len(), 3);
@@ -681,8 +699,11 @@ fn test_response_codes() {
             _,
             Response::Data {
                 status: Status::Ok,
-                code: None,
-                information: Some(Cow::Borrowed("[CAPABILITY UIDPLUS IDLE] Logged in")),
+                outcome:
+                    Outcome {
+                        code: None,
+                        information: Some(Cow::Borrowed("[CAPABILITY UIDPLUS IDLE] Logged in")),
+                    },
             },
         )) => {}
         rsp => panic!("unexpected response {rsp:?}"),
@@ -693,8 +714,11 @@ fn test_response_codes() {
             _,
             Response::Data {
                 status: Status::No,
-                code: Some(ResponseCode::BadCharset(None)),
-                information: Some(Cow::Borrowed("error")),
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::BadCharset(None)),
+                        information: Some(Cow::Borrowed("error")),
+                    },
             },
         )) => {}
         rsp => panic!("unexpected response {rsp:?}"),
@@ -705,8 +729,11 @@ fn test_response_codes() {
             _,
             Response::Data {
                 status: Status::No,
-                code: Some(ResponseCode::BadCharset(Some(v))),
-                information: Some(Cow::Borrowed("error")),
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::BadCharset(Some(v))),
+                        information: Some(Cow::Borrowed("error")),
+                    },
             },
         )) => {
             assert_eq!(v.len(), 2);
@@ -721,8 +748,11 @@ fn test_response_codes() {
             _,
             Response::Data {
                 status: Status::No,
-                code: None,
-                information: Some(Cow::Borrowed("[BADCHARSET ()] error")),
+                outcome:
+                    Outcome {
+                        code: None,
+                        information: Some(Cow::Borrowed("[BADCHARSET ()] error")),
+                    },
             },
         )) => {}
         rsp => panic!("unexpected response {rsp:?}"),
@@ -750,10 +780,10 @@ fn test_continuation() {
     match parse_response(b"+ \r\n") {
         Ok((
             _,
-            Response::Continue {
+            Response::Continue(Outcome {
                 code: None,
                 information: None,
-            },
+            }),
         )) => {}
         rsp => panic!("unexpected response {rsp:?}"),
     }
@@ -762,10 +792,10 @@ fn test_continuation() {
     match parse_response(b"+\r\n") {
         Ok((
             _,
-            Response::Continue {
+            Response::Continue(Outcome {
                 code: None,
                 information: None,
-            },
+            }),
         )) => {}
         rsp => panic!("unexpected response {rsp:?}"),
     }
@@ -876,8 +906,11 @@ fn test_uidplus() {
             _,
             Response::Data {
                 status: Status::Ok,
-                code: Some(ResponseCode::AppendUid(38505, uid_set)),
-                information: Some(Cow::Borrowed("APPEND completed")),
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::AppendUid(38505, uid_set)),
+                        information: Some(Cow::Borrowed("APPEND completed")),
+                    },
             },
         )) if uid_set == [3955.into()] => {}
         rsp => panic!("Unexpected response: {rsp:?}"),
@@ -889,8 +922,11 @@ fn test_uidplus() {
             _,
             Response::Data {
                 status: Status::Ok,
-                code: Some(ResponseCode::CopyUid(38505, uid_set_src, uid_set_dst)),
-                information: Some(Cow::Borrowed("Done")),
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::CopyUid(38505, uid_set_src, uid_set_dst)),
+                        information: Some(Cow::Borrowed("Done")),
+                    },
             },
         )) if uid_set_src == [304.into(), (319..=320).into()]
             && uid_set_dst == [(3956..=3958).into()] => {}
@@ -903,8 +939,11 @@ fn test_uidplus() {
             _,
             Response::Data {
                 status: Status::No,
-                code: Some(ResponseCode::UidNotSticky),
-                information: Some(Cow::Borrowed("Non-persistent UIDs")),
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::UidNotSticky),
+                        information: Some(Cow::Borrowed("Non-persistent UIDs")),
+                    },
             },
         )) => {}
         rsp => panic!("Unexpected response: {rsp:?}"),
@@ -980,8 +1019,11 @@ fn test_parsing_of_quota_capability_in_login_response() {
             _,
             Response::Data {
                 status: Status::Ok,
-                code: Some(ResponseCode::Capabilities(c)),
-                information: Some(Cow::Borrowed("Logged in")),
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::Capabilities(c)),
+                        information: Some(Cow::Borrowed("Logged in")),
+                    },
             },
         )) => {
             assert_eq!(c.len(), 3);
@@ -1000,8 +1042,11 @@ fn test_parsing_of_bye_response() {
             _,
             Response::Data {
                 status: Status::Bye,
-                code: None,
-                information: None,
+                outcome:
+                    Outcome {
+                        code: None,
+                        information: None,
+                    },
             },
         )) => {}
         rsp => panic!("unexpected response {rsp:?}"),
@@ -1011,8 +1056,11 @@ fn test_parsing_of_bye_response() {
             _,
             Response::Data {
                 status: Status::Bye,
-                code: None,
-                information: Some(Cow::Borrowed("Autologout; idle for too long")),
+                outcome:
+                    Outcome {
+                        code: None,
+                        information: Some(Cow::Borrowed("Autologout; idle for too long")),
+                    },
             },
         )) => {}
         rsp => panic!("unexpected response {rsp:?}"),

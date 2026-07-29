@@ -4,7 +4,7 @@ use std::io;
 
 use futures_util::stream::TryStreamExt;
 use tokio_imap::builders::CommandBuilder;
-use tokio_imap::types::{Attribute, AttributeValue, Response};
+use tokio_imap::types::{Attribute, AttributeValue, Outcome, Response};
 use tokio_imap::ResponseData;
 use tokio_imap::TlsClient;
 
@@ -41,7 +41,10 @@ async fn imap_fetch(
 
     match responses[0].parsed() {
         Response::Capabilities(_) => {}
-        Response::Done { information, .. } => {
+        Response::Done {
+            outcome: Outcome { information, .. },
+            ..
+        } => {
             if let Some(info) = information {
                 eprintln!("Login failed: {info:?}");
             }
