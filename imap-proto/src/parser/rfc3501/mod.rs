@@ -286,10 +286,7 @@ fn name_attribute(i: &[u8]) -> IResult<&[u8], NameAttribute<'_>> {
     ))(i)
 }
 
-#[allow(clippy::type_complexity)]
-fn mailbox_list(
-    i: &[u8],
-) -> IResult<&[u8], (Vec<NameAttribute<'_>>, Option<Cow<'_, str>>, Cow<'_, str>)> {
+fn mailbox_list(i: &[u8]) -> IResult<&[u8], MailboxListData<'_>> {
     map(
         tuple((
             parenthesized_list(name_attribute),
@@ -298,27 +295,23 @@ fn mailbox_list(
             tag(b" "),
             mailbox,
         )),
-        |(name_attributes, _, delimiter, _, name)| (name_attributes, delimiter, name),
+        |(name_attributes, _, delimiter, _, name)| MailboxListData {
+            name_attributes,
+            delimiter,
+            name,
+        },
     )(i)
 }
 
 fn mailbox_data_list(i: &[u8]) -> IResult<&[u8], MailboxDatum<'_>> {
     map(preceded(tag_no_case("LIST "), mailbox_list), |data| {
-        MailboxDatum::List {
-            name_attributes: data.0,
-            delimiter: data.1,
-            name: data.2,
-        }
+        MailboxDatum::List(data)
     })(i)
 }
 
 fn mailbox_data_lsub(i: &[u8]) -> IResult<&[u8], MailboxDatum<'_>> {
     map(preceded(tag_no_case("LSUB "), mailbox_list), |data| {
-        MailboxDatum::List {
-            name_attributes: data.0,
-            delimiter: data.1,
-            name: data.2,
-        }
+        MailboxDatum::List(data)
     })(i)
 }
 

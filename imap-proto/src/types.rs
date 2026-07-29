@@ -216,11 +216,7 @@ pub struct Metadata {
 pub enum MailboxDatum<'a> {
     Exists(u32),
     Flags(Vec<Cow<'a, str>>),
-    List {
-        name_attributes: Vec<NameAttribute<'a>>,
-        delimiter: Option<Cow<'a, str>>,
-        name: Cow<'a, str>,
-    },
+    List(MailboxListData<'a>),
     Search(Vec<u32>),
     Sort(Vec<u32>),
     Status {
@@ -248,18 +244,7 @@ impl<'a> MailboxDatum<'a> {
             MailboxDatum::Flags(flags) => {
                 MailboxDatum::Flags(flags.into_iter().map(to_owned_cow).collect())
             }
-            MailboxDatum::List {
-                name_attributes,
-                delimiter,
-                name,
-            } => MailboxDatum::List {
-                name_attributes: name_attributes
-                    .into_iter()
-                    .map(|named_attribute| named_attribute.into_owned())
-                    .collect(),
-                delimiter: delimiter.map(to_owned_cow),
-                name: to_owned_cow(name),
-            },
+            MailboxDatum::List(data) => MailboxDatum::List(data.into_owned()),
             MailboxDatum::Search(seqs) => MailboxDatum::Search(seqs),
             MailboxDatum::Sort(seqs) => MailboxDatum::Sort(seqs),
             MailboxDatum::Status { mailbox, status } => MailboxDatum::Status {
@@ -284,6 +269,27 @@ impl<'a> MailboxDatum<'a> {
             }
             MailboxDatum::GmailMsgId(msgid) => MailboxDatum::GmailMsgId(msgid),
             MailboxDatum::GmailThrId(thrid) => MailboxDatum::GmailThrId(thrid),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MailboxListData<'a> {
+    pub name_attributes: Vec<NameAttribute<'a>>,
+    pub delimiter: Option<Cow<'a, str>>,
+    pub name: Cow<'a, str>,
+}
+
+impl MailboxListData<'_> {
+    pub fn into_owned(self) -> MailboxListData<'static> {
+        MailboxListData {
+            name_attributes: self
+                .name_attributes
+                .into_iter()
+                .map(|named_attribute| named_attribute.into_owned())
+                .collect(),
+            delimiter: self.delimiter.map(to_owned_cow),
+            name: to_owned_cow(self.name),
         }
     }
 }

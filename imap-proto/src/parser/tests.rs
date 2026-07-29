@@ -20,9 +20,9 @@ fn test_name_attributes() {
     ) {
         Ok((
             _,
-            Response::MailboxData(MailboxDatum::List {
+            Response::MailboxData(MailboxDatum::List(MailboxListData {
                 name_attributes, ..
-            }),
+            })),
         )) => {
             assert_eq!(
                 name_attributes,
