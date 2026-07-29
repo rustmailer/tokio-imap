@@ -1,4 +1,4 @@
-use super::{bodystructure::BodyStructParser, parse_response};
+use super::{bodystructure::BodyStructParser, parse_response, parse_response_with_enabled};
 use crate::types::*;
 use std::borrow::Cow;
 use std::num::NonZeroUsize;
@@ -20,9 +20,9 @@ fn test_name_attributes() {
     ) {
         Ok((
             _,
-            Response::MailboxData(MailboxDatum::List {
+            Response::MailboxData(MailboxDatum::List(MailboxListData {
                 name_attributes, ..
-            }),
+            })),
         )) => {
             assert_eq!(
                 name_attributes,
@@ -385,8 +385,11 @@ fn test_unseen() {
             _,
             Response::Data {
                 status: Status::Ok,
-                code: Some(ResponseCode::Unseen(3)),
-                information: Some(Cow::Borrowed("Message 3 is first unseen")),
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::Unseen(3)),
+                        information: Some(Cow::Borrowed("Message 3 is first unseen")),
+                    },
             },
         ) => {}
         rsp => panic!("unexpected response {rsp:?}"),
@@ -421,6 +424,66 @@ fn test_body_structure() {
             assert!(
                 matches!(*body, AttributeValue::BodyStructure(_)),
                 "body = {body:?}"
+            );
+        }
+        rsp => panic!("unexpected response {rsp:?}"),
+    }
+}
+
+// Coverage for the lossy-decode (Cow::Owned) branch of resp_text:
+// a server greeting with non-UTF-8 bytes in the message text (here
+// Latin-1 "Willkommen" with ü = 0xFC) must parse without failing,
+// and the information field must come back as an owned Cow with
+// the U+FFFD replacement character.
+#[test]
+fn test_resp_text_lossy_decode_8bit() {
+    let mut response: Vec<u8> = Vec::new();
+    response.extend_from_slice(b"* OK Willk");
+    response.push(0xFC); // Latin-1 'ü', not valid UTF-8
+    response.extend_from_slice(b"ommen\r\n");
+
+    match parse_response(&response) {
+        Ok((
+            _,
+            Response::Data {
+                status: Status::Ok,
+                outcome:
+                    Outcome {
+                        code: None,
+                        information: Some(info),
+                    },
+            },
+        )) => {
+            assert!(
+                matches!(info, Cow::Owned(_)),
+                "expected lossy Owned, got {info:?}"
+            );
+            assert_eq!(info, "Willk\u{FFFD}ommen");
+        }
+        rsp => panic!("unexpected response {rsp:?}"),
+    }
+}
+
+// Regression: BODYSTRUCTURE with an 8-bit literal in a body parameter
+// (e.g. a MIME filename in Latin-1 / ISO-8859-9). Real-world IMAP
+// servers (Dovecot, Cyrus) emit these for mails from clients with
+// non-UTF-8 locales (Turkish "Görüntü1" is a common case from Outlook
+// for Turkish). The parser must accept the bytes via lossy UTF-8
+// decoding instead of failing the entire response.
+#[test]
+fn test_body_structure_with_8bit_literal_filename() {
+    // ("name" {8}\r\n<G>\xf6<r>\xfc<n><t>\xfc<1>) — "Görüntü1" in Latin-1
+    let mut response: Vec<u8> = Vec::new();
+    response.extend_from_slice(b"* 15 FETCH (BODYSTRUCTURE (\"image\" \"png\" (\"name\" {8}\r\n");
+    response.extend_from_slice(&[0x47, 0xF6, 0x72, 0xFC, 0x6E, 0x74, 0xFC, 0x31]);
+    response
+        .extend_from_slice(b") \"<part1@example.com>\" NIL \"base64\" 15440 NIL NIL NIL NIL))\r\n");
+    match parse_response(&response) {
+        Ok((_, Response::Fetch(_, attrs))) => {
+            assert!(
+                matches!(attrs[0], AttributeValue::BodyStructure(_)),
+                "body = {:?}",
+                attrs[0]
             );
         }
         rsp => panic!("unexpected response {rsp:?}"),
@@ -475,10 +538,10 @@ fn test_notify() {
     match parse_response(b"+ idling\r\n") {
         Ok((
             _,
-            Response::Continue {
+            Response::Continue(Outcome {
                 code: None,
                 information: Some(Cow::Borrowed("idling")),
-            },
+            }),
         )) => {}
         rsp => panic!("unexpected response {rsp:?}"),
     }
@@ -566,8 +629,11 @@ fn test_response_codes() {
             _,
             Response::Data {
                 status: Status::Ok,
-                code: Some(ResponseCode::Alert),
-                information: Some(Cow::Borrowed("Alert!")),
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::Alert),
+                        information: Some(Cow::Borrowed("Alert!")),
+                    },
             },
         )) => {}
         rsp => panic!("unexpected response {rsp:?}"),
@@ -578,8 +644,11 @@ fn test_response_codes() {
             _,
             Response::Data {
                 status: Status::No,
-                code: Some(ResponseCode::Parse),
-                information: Some(Cow::Borrowed("Something")),
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::Parse),
+                        information: Some(Cow::Borrowed("Something")),
+                    },
             },
         )) => {}
         rsp => panic!("unexpected response {rsp:?}"),
@@ -590,8 +659,11 @@ fn test_response_codes() {
             _,
             Response::Data {
                 status: Status::Ok,
-                code: Some(ResponseCode::Capabilities(c)),
-                information: Some(Cow::Borrowed("Logged in")),
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::Capabilities(c)),
+                        information: Some(Cow::Borrowed("Logged in")),
+                    },
             },
         )) => {
             assert_eq!(c.len(), 2);
@@ -606,8 +678,11 @@ fn test_response_codes() {
             _,
             Response::Data {
                 status: Status::Ok,
-                code: Some(ResponseCode::Capabilities(c)),
-                information: Some(Cow::Borrowed("Logged in")),
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::Capabilities(c)),
+                        information: Some(Cow::Borrowed("Logged in")),
+                    },
             },
         )) => {
             assert_eq!(c.len(), 3);
@@ -624,8 +699,11 @@ fn test_response_codes() {
             _,
             Response::Data {
                 status: Status::Ok,
-                code: None,
-                information: Some(Cow::Borrowed("[CAPABILITY UIDPLUS IDLE] Logged in")),
+                outcome:
+                    Outcome {
+                        code: None,
+                        information: Some(Cow::Borrowed("[CAPABILITY UIDPLUS IDLE] Logged in")),
+                    },
             },
         )) => {}
         rsp => panic!("unexpected response {rsp:?}"),
@@ -636,8 +714,11 @@ fn test_response_codes() {
             _,
             Response::Data {
                 status: Status::No,
-                code: Some(ResponseCode::BadCharset(None)),
-                information: Some(Cow::Borrowed("error")),
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::BadCharset(None)),
+                        information: Some(Cow::Borrowed("error")),
+                    },
             },
         )) => {}
         rsp => panic!("unexpected response {rsp:?}"),
@@ -648,8 +729,11 @@ fn test_response_codes() {
             _,
             Response::Data {
                 status: Status::No,
-                code: Some(ResponseCode::BadCharset(Some(v))),
-                information: Some(Cow::Borrowed("error")),
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::BadCharset(Some(v))),
+                        information: Some(Cow::Borrowed("error")),
+                    },
             },
         )) => {
             assert_eq!(v.len(), 2);
@@ -664,8 +748,11 @@ fn test_response_codes() {
             _,
             Response::Data {
                 status: Status::No,
-                code: None,
-                information: Some(Cow::Borrowed("[BADCHARSET ()] error")),
+                outcome:
+                    Outcome {
+                        code: None,
+                        information: Some(Cow::Borrowed("[BADCHARSET ()] error")),
+                    },
             },
         )) => {}
         rsp => panic!("unexpected response {rsp:?}"),
@@ -693,10 +780,10 @@ fn test_continuation() {
     match parse_response(b"+ \r\n") {
         Ok((
             _,
-            Response::Continue {
+            Response::Continue(Outcome {
                 code: None,
                 information: None,
-            },
+            }),
         )) => {}
         rsp => panic!("unexpected response {rsp:?}"),
     }
@@ -705,10 +792,10 @@ fn test_continuation() {
     match parse_response(b"+\r\n") {
         Ok((
             _,
-            Response::Continue {
+            Response::Continue(Outcome {
                 code: None,
                 information: None,
-            },
+            }),
         )) => {}
         rsp => panic!("unexpected response {rsp:?}"),
     }
@@ -725,6 +812,245 @@ fn test_enabled() {
             ])
         ),
         rsp => panic!("Unexpected response: {rsp:?}"),
+    }
+}
+
+#[test]
+fn test_enabled_uidonly() {
+    assert_eq!(
+        parse_response(b"* ENABLED UIDONLY\r\n"),
+        Ok((
+            &b""[..],
+            Response::Capabilities(vec![Capability::Atom(Cow::Borrowed("UIDONLY"))])
+        ))
+    );
+}
+
+#[test]
+fn test_enabled_uidonly_opt_in() {
+    assert_eq!(
+        parse_response_with_enabled(b"* ENABLED UIDONLY\r\n"),
+        Ok((
+            &b""[..],
+            Response::Enabled(vec![Capability::Atom(Cow::Borrowed("UIDONLY"))])
+        ))
+    );
+}
+
+#[test]
+fn test_capability_uidonly_opt_in() {
+    assert_eq!(
+        parse_response_with_enabled(b"* CAPABILITY IMAP4rev1 UIDONLY\r\n"),
+        Ok((
+            &b""[..],
+            Response::Capabilities(vec![
+                Capability::Imap4rev1,
+                Capability::Atom(Cow::Borrowed("UIDONLY")),
+            ])
+        ))
+    );
+}
+
+#[test]
+fn test_uidfetch_metadata_without_redundant_uid() {
+    match parse_response(
+        b"* 25996 UIDFETCH (FLAGS (\\Seen) RFC822.SIZE 321 INTERNALDATE \"01-Jan-2026 00:00:00 +0000\")\r\n",
+    ) {
+        Ok((_, Response::UidFetch(25996, attrs))) => {
+            assert!(matches!(attrs[0], AttributeValue::Flags(_)));
+            assert!(matches!(attrs[1], AttributeValue::Rfc822Size(321)));
+            assert!(matches!(attrs[2], AttributeValue::InternalDate(_)));
+            assert!(!attrs
+                .iter()
+                .any(|attr| matches!(attr, AttributeValue::Uid(_))));
+        }
+        rsp => panic!("Unexpected response: {rsp:?}"),
+    }
+}
+
+#[test]
+fn test_uidfetch_with_redundant_uid() {
+    match parse_response(b"* 25900 UIDFETCH (FLAGS () UID 25900)\r\n") {
+        Ok((_, Response::UidFetch(25900, attrs))) => {
+            assert!(matches!(attrs[0], AttributeValue::Flags(_)));
+            assert!(matches!(attrs[1], AttributeValue::Uid(25900)));
+        }
+        rsp => panic!("Unexpected response: {rsp:?}"),
+    }
+}
+
+#[test]
+fn test_uidfetch_body_literal() {
+    match parse_response(b"* 42 UIDFETCH (UID 42 BODY[] {5}\r\nhello)\r\n") {
+        Ok((_, Response::UidFetch(42, attrs))) => {
+            assert!(matches!(attrs[0], AttributeValue::Uid(42)));
+            assert!(matches!(
+                &attrs[1],
+                AttributeValue::BodySection {
+                    data: Some(body),
+                    ..
+                } if body.as_ref() == b"hello"
+            ));
+        }
+        rsp => panic!("Unexpected response: {rsp:?}"),
+    }
+}
+
+#[test]
+fn test_malformed_uidfetch() {
+    assert!(parse_response(b"* UIDFETCH (FLAGS ())\r\n").is_err());
+    assert!(parse_response(b"* 42 UIDFETCH FLAGS ()\r\n").is_err());
+    assert!(matches!(
+        parse_response(b"* 42 UIDFETCH (FLAGS "),
+        Err(nom::Err::Incomplete(_))
+    ));
+}
+
+#[test]
+fn test_uidfetch_rejects_zero_uid() {
+    assert!(parse_response(b"* 0 UIDFETCH (FLAGS ())\r\n").is_err());
+}
+
+#[test]
+fn test_uidfetch_accepts_uid_boundaries() {
+    for (response, expected_uid) in [
+        (&b"* 1 UIDFETCH (FLAGS ())\r\n"[..], 1),
+        (&b"* 4294967295 UIDFETCH (FLAGS ())\r\n"[..], u32::MAX),
+    ] {
+        match parse_response(response) {
+            Ok((_, Response::UidFetch(uid, _))) => assert_eq!(uid, expected_uid),
+            rsp => panic!("Unexpected response: {rsp:?}"),
+        }
+    }
+}
+
+#[test]
+fn test_uidonly_and_message_limit_response_codes() {
+    match parse_response(b"A1 BAD [UIDREQUIRED] use UIDs\r\n") {
+        Ok((
+            _,
+            Response::Done {
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::UidRequired),
+                        ..
+                    },
+                ..
+            },
+        )) => {}
+        rsp => panic!("Unexpected response: {rsp:?}"),
+    }
+
+    match parse_response(b"A2 OK [MESSAGELIMIT 1000 23221] partial\r\n") {
+        Ok((
+            _,
+            Response::Done {
+                outcome:
+                    Outcome {
+                        code:
+                            Some(ResponseCode::MessageLimit {
+                                limit: 1000,
+                                last_uid: Some(23221),
+                            }),
+                        ..
+                    },
+                ..
+            },
+        )) => {}
+        rsp => panic!("Unexpected response: {rsp:?}"),
+    }
+
+    match parse_response(b"A3 NO [MESSAGELIMIT 1000] too many\r\n") {
+        Ok((
+            _,
+            Response::Done {
+                outcome:
+                    Outcome {
+                        code:
+                            Some(ResponseCode::MessageLimit {
+                                limit: 1000,
+                                last_uid: None,
+                            }),
+                        ..
+                    },
+                ..
+            },
+        )) => {}
+        rsp => panic!("Unexpected response: {rsp:?}"),
+    }
+}
+
+#[test]
+fn test_untagged_message_limit_response_code() {
+    match parse_response(b"* NO [MESSAGELIMIT 1000 23221] partial\r\n") {
+        Ok((
+            _,
+            Response::Data {
+                status: Status::No,
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::MessageLimit { limit, last_uid }),
+                        ..
+                    },
+                ..
+            },
+        )) => {
+            assert_eq!(limit, 1000);
+            assert_eq!(last_uid, Some(23221));
+        }
+        rsp => panic!("Unexpected response: {rsp:?}"),
+    }
+}
+
+#[test]
+fn test_message_limit_rejects_zero_values() {
+    for response in [
+        &b"A1 OK [MESSAGELIMIT 0] invalid\r\n"[..],
+        &b"A2 OK [MESSAGELIMIT 1000 0] invalid\r\n"[..],
+    ] {
+        assert!(!matches!(
+            parse_response(response),
+            Ok((
+                _,
+                Response::Done {
+                    outcome: Outcome {
+                        code: Some(ResponseCode::MessageLimit { .. }),
+                        ..
+                    },
+                    ..
+                }
+            ))
+        ));
+    }
+}
+
+#[test]
+fn test_message_limit_accepts_nonzero_boundaries() {
+    for (response, expected_limit, expected_last_uid) in [
+        (&b"A1 OK [MESSAGELIMIT 1 1] partial\r\n"[..], 1, 1),
+        (
+            &b"A2 OK [MESSAGELIMIT 4294967295 4294967295] partial\r\n"[..],
+            u32::MAX,
+            u32::MAX,
+        ),
+    ] {
+        match parse_response(response) {
+            Ok((
+                _,
+                Response::Done {
+                    outcome:
+                        Outcome {
+                            code: Some(ResponseCode::MessageLimit { limit, last_uid }),
+                            ..
+                        },
+                    ..
+                },
+            )) => {
+                assert_eq!(limit, expected_limit);
+                assert_eq!(last_uid, Some(expected_last_uid));
+            }
+            rsp => panic!("Unexpected response: {rsp:?}"),
+        }
     }
 }
 
@@ -819,8 +1145,11 @@ fn test_uidplus() {
             _,
             Response::Data {
                 status: Status::Ok,
-                code: Some(ResponseCode::AppendUid(38505, uid_set)),
-                information: Some(Cow::Borrowed("APPEND completed")),
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::AppendUid(38505, uid_set)),
+                        information: Some(Cow::Borrowed("APPEND completed")),
+                    },
             },
         )) if uid_set == [3955.into()] => {}
         rsp => panic!("Unexpected response: {rsp:?}"),
@@ -832,8 +1161,11 @@ fn test_uidplus() {
             _,
             Response::Data {
                 status: Status::Ok,
-                code: Some(ResponseCode::CopyUid(38505, uid_set_src, uid_set_dst)),
-                information: Some(Cow::Borrowed("Done")),
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::CopyUid(38505, uid_set_src, uid_set_dst)),
+                        information: Some(Cow::Borrowed("Done")),
+                    },
             },
         )) if uid_set_src == [304.into(), (319..=320).into()]
             && uid_set_dst == [(3956..=3958).into()] => {}
@@ -846,8 +1178,11 @@ fn test_uidplus() {
             _,
             Response::Data {
                 status: Status::No,
-                code: Some(ResponseCode::UidNotSticky),
-                information: Some(Cow::Borrowed("Non-persistent UIDs")),
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::UidNotSticky),
+                        information: Some(Cow::Borrowed("Non-persistent UIDs")),
+                    },
             },
         )) => {}
         rsp => panic!("Unexpected response: {rsp:?}"),
@@ -923,8 +1258,11 @@ fn test_parsing_of_quota_capability_in_login_response() {
             _,
             Response::Data {
                 status: Status::Ok,
-                code: Some(ResponseCode::Capabilities(c)),
-                information: Some(Cow::Borrowed("Logged in")),
+                outcome:
+                    Outcome {
+                        code: Some(ResponseCode::Capabilities(c)),
+                        information: Some(Cow::Borrowed("Logged in")),
+                    },
             },
         )) => {
             assert_eq!(c.len(), 3);
@@ -943,8 +1281,11 @@ fn test_parsing_of_bye_response() {
             _,
             Response::Data {
                 status: Status::Bye,
-                code: None,
-                information: None,
+                outcome:
+                    Outcome {
+                        code: None,
+                        information: None,
+                    },
             },
         )) => {}
         rsp => panic!("unexpected response {rsp:?}"),
@@ -954,10 +1295,110 @@ fn test_parsing_of_bye_response() {
             _,
             Response::Data {
                 status: Status::Bye,
-                code: None,
-                information: Some(Cow::Borrowed("Autologout; idle for too long")),
+                outcome:
+                    Outcome {
+                        code: None,
+                        information: Some(Cow::Borrowed("Autologout; idle for too long")),
+                    },
             },
         )) => {}
         rsp => panic!("unexpected response {rsp:?}"),
     };
+}
+
+// ── RFC 8474 OBJECTID (EMAILID / THREADID) — Apache James 3.9 ───────────────
+
+#[test]
+fn test_fetch_rfc8474_emailid() {
+    // James sends EMAILID in FETCH responses when the client requests it.
+    match parse_response(
+        b"* 1 FETCH (UID 123 EMAILID (M6d952b5c6f82bfd8) BODY[]<0> {5}\r\nhello)\r\n",
+    ) {
+        Ok((_, Response::Fetch(1, attrs))) => {
+            assert_eq!(attrs.len(), 3);
+            assert!(matches!(attrs[0], AttributeValue::Uid(123)));
+            match &attrs[1] {
+                AttributeValue::EmailId(id) => assert_eq!(id.as_ref(), "M6d952b5c6f82bfd8"),
+                other => panic!("expected EmailId, got {other:?}"),
+            }
+            assert!(matches!(
+                attrs[2],
+                AttributeValue::BodySection { index: Some(0), .. }
+            ));
+        }
+        rsp => panic!("unexpected response {rsp:?}"),
+    }
+}
+
+#[test]
+fn test_fetch_rfc8474_threadid() {
+    match parse_response(
+        b"* 1 FETCH (UID 123 THREADID (T64b4c7e452f961e2) BODY[]<0> {5}\r\nhello)\r\n",
+    ) {
+        Ok((_, Response::Fetch(1, attrs))) => {
+            assert_eq!(attrs.len(), 3);
+            match &attrs[1] {
+                AttributeValue::ThreadId(Some(id)) => {
+                    assert_eq!(id.as_ref(), "T64b4c7e452f961e2");
+                }
+                other => panic!("expected ThreadId(Some), got {other:?}"),
+            }
+        }
+        rsp => panic!("unexpected response {rsp:?}"),
+    }
+}
+
+#[test]
+fn test_fetch_rfc8474_threadid_nil() {
+    // RFC 8474 §5.2: THREADID can be NIL for messages with no thread association.
+    match parse_response(b"* 1 FETCH (UID 7 THREADID NIL BODY[]<0> {2}\r\nhi)\r\n") {
+        Ok((_, Response::Fetch(1, attrs))) => {
+            assert_eq!(attrs.len(), 3);
+            assert!(matches!(attrs[1], AttributeValue::ThreadId(None)));
+        }
+        rsp => panic!("unexpected response {rsp:?}"),
+    }
+}
+
+#[test]
+fn test_fetch_rfc8474_emailid_and_threadid() {
+    // Both attributes in the same FETCH response.
+    match parse_response(
+        b"* 1 FETCH (UID 42 EMAILID (Mdeadbeef) THREADID (Tcafebabe) BODY[]<0> {3}\r\nhey)\r\n",
+    ) {
+        Ok((_, Response::Fetch(1, attrs))) => {
+            assert_eq!(attrs.len(), 4);
+            assert!(matches!(attrs[0], AttributeValue::Uid(42)));
+            match &attrs[1] {
+                AttributeValue::EmailId(id) => assert_eq!(id.as_ref(), "Mdeadbeef"),
+                other => panic!("expected EmailId, got {other:?}"),
+            }
+            match &attrs[2] {
+                AttributeValue::ThreadId(Some(id)) => assert_eq!(id.as_ref(), "Tcafebabe"),
+                other => panic!("expected ThreadId(Some), got {other:?}"),
+            }
+        }
+        rsp => panic!("unexpected response {rsp:?}"),
+    }
+}
+
+#[test]
+fn test_fetch_unknown_savedate_fallback() {
+    // RFC 8514 §2: SAVEDATE is not yet typed first-class.  Confirm the
+    // catch-all `msg_att_unknown` still absorbs unknown extension
+    // attributes so that the rest of the FETCH list keeps parsing.
+    match parse_response(
+        b"* 1 FETCH (UID 9 SAVEDATE \"01-Jan-2025 12:00:00 +0000\" BODY[]<0> {2}\r\nok)\r\n",
+    ) {
+        Ok((_, Response::Fetch(1, attrs))) => {
+            assert_eq!(attrs.len(), 3);
+            assert!(matches!(attrs[0], AttributeValue::Uid(9)));
+            assert!(matches!(attrs[1], AttributeValue::Unknown));
+            assert!(matches!(
+                attrs[2],
+                AttributeValue::BodySection { index: Some(0), .. }
+            ));
+        }
+        rsp => panic!("unexpected response {rsp:?}"),
+    }
 }
